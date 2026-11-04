@@ -245,103 +245,136 @@ function resumeListening(id, mode) {
     if (demo) demo.startListening(id);
 }
 
+
 async function onUserTurnFinished(id) {
-  if (state !== S.LISTENING || id !== session) return;
+    if (state !== S.LISTENING || id !== session) return;
 
-  userSpeaking = false;
-  setState(S.THINKING);
+    userSpeaking = false;
+    setState(S.THINKING);
 
-  try {
-    if (!mediaRecorder || mediaRecorder.state !== "recording") {
-      throw new Error("Audio recorder is not active.");
-    }
-
-    const audioBlob = await new Promise((resolve, reject) => {
-      const chunks = [];
-
-      const handleData = event => {
-        if (event.data && event.data.size > 0) {
-          chunks.push(event.data);
-        }
-      };
-
-      const handleStop = () => {
-        mediaRecorder.removeEventListener("dataavailable", handleData);
-        mediaRecorder.removeEventListener("stop", handleStop);
-
-        if (!chunks.length) {
-          reject(new Error("No audio was recorded."));
-          return;
+    try {
+        if (!mediaRecorder || mediaRecorder.state !== "recording") {
+            throw new Error("Audio recorder is not active.");
         }
 
-        resolve(new Blob(chunks, { type: "audio/webm" }));
-      };
+        // Record the completed audio
+        const audioBlob = await new Promise((resolve, reject) => {
+            const chunks = [];
 
-      mediaRecorder.addEventListener("dataavailable", handleData);
-      mediaRecorder.addEventListener("stop", handleStop);
+            const handleData = event => {
+                if (event.data && event.data.size > 0) {
+                    chunks.push(event.data);
+                }
+            };
 
-      mediaRecorder.stop();
-    });
+            const handleStop = () => {
+                mediaRecorder.removeEventListener("dataavailable", handleData);
+                mediaRecorder.removeEventListener("stop", handleStop);
 
-    const data = await sendAudioToBackend(audioBlob);
+                if (!chunks.length) {
+                    reject(new Error("No audio was recorded."));
+                    return;
+                }
 
-    if (data.transcript) {
-      addMessage("user", data.transcript);
+                resolve(new Blob(chunks, { type: "audio/webm" }));
+            };
+
+            mediaRecorder.addEventListener("dataavailable", handleData);
+            mediaRecorder.addEventListener("stop", handleStop);
+
+            mediaRecorder.stop();
+        });
+
+        // Send audio to backend
+        const data = await sendAudioToBackend(audioBlob);
+
+        if (!alive(id)) return;
+
+        console.log("Processed voice response:", data);
+
+        // Get dialect and confidence
+        const dialect = SELECTED_DIALECT || data.detected_dialect || "Unknown";
+        const confidence = data.dialect_confidence;
+
+        let confidenceText = "";
+
+        if (confidence !== undefined && confidence !== null) {
+            const value = Number(confidence);
+
+            confidenceText = ` (${Number.isFinite(value)
+                ? (value <= 1 ? value * 100 : value).toFixed(1)
+                : confidence}%)`;
+        }
+
+        // USER MESSAGE: dialect + transcript in ONE bubble
+        if (data.transcript) {
+            const userRow = addMessage("user", "");
+
+            const textSpan = userRow.querySelector(".bubble span");
+
+            if (textSpan) {
+                const dialectLabel = document.createElement("span");
+                dialectLabel.className = "user-dialect-label";
+                dialectLabel.textContent = `User Dialect: ${dialect}${confidenceText}`;
+
+                const transcriptText = document.createElement("span");
+                transcriptText.className = "user-transcript";
+                transcriptText.textContent = data.transcript;
+
+                textSpan.append(dialectLabel, transcriptText);
+            }
+        }
+
+        // AI RESPONSE: answer only
+        const answer =
+            data.answer_dialect ||
+            data.regional_answer ||
+            "";
+
+        if (!answer) {
+            throw new Error("Backend returned an empty dialect answer.");
+        }
+
+        const responseText = answer;
+        const aiRow = addMessage("ai", responseText);
+
+        // Play backend audio
+        if (data.audio_base64) {
+            let audioSrc = data.audio_base64;
+
+            if (!audioSrc.startsWith("data:")) {
+                audioSrc = `data:audio/wav;base64,${audioSrc}`;
+            }
+
+            await playAIResponse(
+                {
+                    text: responseText,
+                    audioUrl: audioSrc
+                },
+                aiRow,
+                id
+            );
+
+        } else {
+            await playAIResponse(
+                {
+                    text: responseText
+                },
+                aiRow,
+                id
+            );
+        }
+
+    } catch (error) {
+        console.error("Voice-to-voice error:", error);
+
+        if (!alive(id)) return;
+
+        setState(S.ENDED);
+        setNotice("Something went wrong while processing your voice.", true);
     }
-
-    const dialect = SELECTED_DIALECT || data.detected_dialect || "Unknown";
-    const confidence = data.dialect_confidence;
-
-    const answer =
-      data.answer_dialect ||
-      data.regional_answer ||
-      "";
-
-    let confidenceText = "";
-
-    if (confidence !== undefined && confidence !== null) {
-      const value = Number(confidence);
-      confidenceText = ` (${Number.isFinite(value) ? (value <= 1 ? value * 100 : value).toFixed(1) : confidence}%)`;
-    }
-
-    const responseText =
-      `Dialect using: ${dialect}${confidenceText}\n\n` 
-      `Tekvaani's answer: ${answer}`;
-
-    const row = addMessage("ai", responseText);
-
-    if (data.audio_base64) {
-      let audioSrc = data.audio_base64;
-
-      if (!audioSrc.startsWith("data:")) {
-        audioSrc = `data:audio/wav;base64,${audioSrc}`;
-      }
-
-      await playAIResponse(
-        {
-          text: responseText,
-          audioUrl: audioSrc
-        },
-        row,
-        id
-      );
-    } else {
-      await playAIResponse(
-        {
-          text: responseText
-        },
-        row,
-        id
-      );
-    }
-
-  } catch (error) {
-    console.error("Voice-to-voice error:", error);
-
-    setState(S.ERROR);
-    setNotice("Something went wrong while processing your voice.", true);
-  }
 }
+
 
 /* =========================================================
    MICROPHONE + SILENCE DETECTION
