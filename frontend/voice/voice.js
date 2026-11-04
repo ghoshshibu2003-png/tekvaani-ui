@@ -305,7 +305,7 @@ async function onUserTurnFinished(id) {
     }
 
     const responseText =
-      `Dialect using: ${dialect}\n\n` 
+      `Dialect using: ${dialect}${confidenceText}\n\n` 
       `Tekvaani's answer: ${answer}`;
 
     const row = addMessage("ai", responseText);
