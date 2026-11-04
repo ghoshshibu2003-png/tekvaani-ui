@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&family=Noto+Sans+Oriya:wght@400;600&display=swap" rel="stylesheet">
+<style>
+/*__CSS__*/
+</style>
+</head>
+
+<body>
+<div class="app __BAR__" id="app" data-state="IDLE">
+
+  <div class="bg" aria-hidden="true">
+    <svg viewBox="0 0 400 200" preserveAspectRatio="xMidYMax slice">
+      <path d="M0 140C60 110 120 165 200 135S340 115 400 140V200H0Z" fill="rgba(110,185,215,.30)"/>
+      <path d="M0 165C80 135 150 185 230 160S350 150 400 168V200H0Z" fill="rgba(110,205,170,.28)"/>
+      <g transform="translate(338 196)"><path d="M0 0C-26-30-22-72 0-108C22-72 26-30 0 0Z" fill="rgba(31,174,122,.55)"/>
+      <path d="M0 0C-30-18-52-44-52-76C-24-62-4-34 0 0Z" fill="rgba(31,140,150,.45)" transform="translate(-6 0)"/>
+      <path d="M0 0C28-14 46-40 48-68C22-56 4-30 0 0Z" fill="rgba(60,190,150,.5)" transform="translate(8 0)"/></g>
+    </svg>
+  </div>
+
+  <header class="topbar">
+    <button class="lang-btn" id="langBtn" type="button" aria-label="Change language"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.6 3.9 5.6 3.9 9s-1.3 6.4-3.9 9c-2.6-2.6-3.9-5.6-3.9-9S9.4 5.6 12 3z"/></svg><span>Language</span></button>
+    <div class="brand"><img class="logo-img" alt="Tekvaani"></div>
+    <button class="icon-btn help" id="helpBtn" type="button" aria-label="How to use">?</button>
+  </header>
+
+  <div class="stack">
+  <main class="content">
+    <div class="orb-wrap"><canvas id="orb" aria-hidden="true"></canvas></div>
+    <div class="status" role="status" aria-live="polite"><h1 id="title">Talk to Tekvaani</h1><p id="sub">Tap the button and speak naturally.</p></div>
+    <div class="eq" id="eq" aria-hidden="true"></div>
+    <div class="dots" aria-hidden="true"><i></i><i></i><i></i></div>
+    <div class="notice" id="notice" role="alert"></div>
+    <section class="chat" id="chat" aria-label="Conversation"></section>
+  </main>
+
+  <footer class="actions">
+    <button class="btn btn-start" id="startBtn" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+      Start Talking
+    </button>
+    <button class="btn btn-end" id="endBtn" type="button" hidden><b></b>End Conversation</button>
+  </footer>
+  </div>
+
+  <div class="scrim" id="scrim"></div>
+
+  <section class="sheet" id="sheet" role="dialog" aria-modal="true" aria-label="How to use" aria-hidden="true">
+    <button class="x" id="sheetClose" type="button" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    <div class="brand"><img class="logo-img" alt="Tekvaani"></div>
+    <h2>How to Use</h2>
+    <div class="step"><span class="n">1</span><span class="ic" style="background:#1f56d6"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></span><div><b>Tap Start Talking</b><span>Tap the button to begin.</span></div></div>
+    <div class="step"><span class="n">2</span><span class="ic" style="background:#2fa65a"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 10v4M9 6v12M13 9v6M17 4v16M21 10v4"/></svg></span><div><b>Speak naturally</b><span>Talk in your own language.</span></div></div>
+    <div class="step"><span class="n">3</span><span class="ic" style="background:#f0a02c"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 9a4 4 0 1 1 8 0c0 2.4-2 3-2 5a2.5 2.5 0 0 1-5 0"/><path d="M12 8.5a1.5 1.5 0 0 1 1.5 1.5"/></svg></span><div><b>Tekvaani listens</b><span>Say what you want.</span></div></div>
+    <div class="step"><span class="n">4</span><span class="ic" style="background:#8a63d8"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-8l-4 3v-3H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/><path d="M8 11h.01M12 11h.01M16 11h.01"/></svg></span><div><b>Wait for response</b><span>Tekvaani will understand and respond.</span></div></div>
+    <div class="step"><span class="n">5</span><span class="ic" style="background:#e5486b"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-14-4M4 4v4h4M4 13a8 8 0 0 0 14 4M20 20v-4h-4"/></svg></span><div><b>Continue talking</b><span>You can keep talking naturally.</span></div></div>
+    <div class="tip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10.5c.7.7 1 1.5 1 2.5h6c0-1 .3-1.8 1-2.5A6 6 0 0 0 12 3z"/></svg>You can speak in Odia and other local languages.</div>
+  </section>
+</div>
+
+<script>
+/*__DEMO_JS__*/
+</script>
+<script>
+/*__VOICE_JS__*/
+</script>
+</body>
+</html>
