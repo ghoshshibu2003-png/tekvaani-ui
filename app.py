@@ -156,7 +156,18 @@ def _back_to_state():
 # ---- remember the choice in this browser (localStorage) ----
 with st.container(key="ls_bridge_box"):
     _stored = sync_selection(st.session_state.selected_state, st.session_state.selected_dialect)
-st.markdown("<style>.st-key-ls_bridge_box{display:none !important;}</style>", unsafe_allow_html=True)
+st.markdown("""
+<style>
+.st-key-ls_bridge_box {
+    position: fixed !important;
+    left: -10000px !important;
+    top: 0 !important;
+    width: 1px !important;
+    height: 1px !important;
+    overflow: hidden !important;
+}
+</style>
+""", unsafe_allow_html=True)
 
 if not st.session_state.get("selection_restored"):
     if _stored is None:
