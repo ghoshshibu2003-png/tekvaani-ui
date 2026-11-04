@@ -8,6 +8,7 @@ import streamlit as st
 
 from frontend.styles import load_styles
 from frontend.voice_to_voice import voice_to_voice
+from frontend.storage import sync_selection
 
 
 # =====================================================
@@ -25,7 +26,7 @@ load_styles()
 
 
 # =====================================================
-# STATE + DIALECT SELECTION SCREENS
+# STATE + DIALECT CONFIGURATION
 # =====================================================
 
 DIALECTS = {
@@ -44,10 +45,41 @@ DIALECTS = {
     ],
 }
 
-for key in ("selected_state", "selected_dialect"):
+for key in ("selected_state", "selected_dialect", "storage_loaded"):
     if key not in st.session_state:
-        st.session_state[key] = None
+        st.session_state[key] = False if key == "storage_loaded" else None
 
+
+# =====================================================
+# RESTORE + SAVE BROWSER SELECTION
+# =====================================================
+
+saved_selection = sync_selection(
+    st.session_state.selected_state,
+    st.session_state.selected_dialect,
+)
+
+if saved_selection is None:
+    # Browser component has not responded yet.
+    st.info("Loading your saved language selection...")
+    st.stop()
+
+if not st.session_state.storage_loaded:
+    st.session_state.storage_loaded = True
+
+    saved_state = saved_selection.get("state")
+    saved_dialect = saved_selection.get("dialect")
+
+    if saved_state in DIALECTS:
+        st.session_state.selected_state = saved_state
+
+        if saved_dialect in DIALECTS[saved_state]:
+            st.session_state.selected_dialect = saved_dialect
+
+
+# =====================================================
+# SELECTION SCREEN STYLING
+# =====================================================
 
 _SELECT_CSS = """
 <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
@@ -163,6 +195,10 @@ _SELECT_CSS = """
 """
 
 
+# =====================================================
+# BOTTOM ARTWORK
+# =====================================================
+
 _ART_SVG = """
 <div class="sel-art" aria-hidden="true">
 <svg viewBox="0 0 400 200" preserveAspectRatio="xMidYMax slice">
@@ -190,6 +226,10 @@ transform="translate(8 0)"/>
 </div>
 """
 
+
+# =====================================================
+# LOGO
+# =====================================================
 
 @lru_cache(maxsize=1)
 def _logo_html() -> str:
@@ -234,6 +274,10 @@ def _logo_html() -> str:
     )
 
 
+# =====================================================
+# SELECTION SCREEN
+# =====================================================
+
 def _selection_screen(
     title,
     subtitle,
@@ -276,8 +320,13 @@ def _selection_screen(
     st.stop()
 
 
+# =====================================================
+# SELECTION CALLBACKS
+# =====================================================
+
 def _pick_state(value):
     st.session_state.selected_state = value
+    st.session_state.selected_dialect = None
 
 
 def _pick_dialect(value):
