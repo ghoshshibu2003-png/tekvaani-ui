@@ -3,12 +3,14 @@
    ========================================================= */
 const DEMO_MODE = __DEMO__;
 const LOGO_SRC = "__LOGO__";
+const LOGO_CLEAN = __LOGO_CLEAN__;   // true = Python already made the logo background transparent
 const SELECTED_DIALECT = "__DIALECT__";
 const SELECTED_STATE = "__STATE_ID__";
 const SELECTED_LANGUAGE = "__LANGUAGE_ID__";
+const SAVED_SELECTION = "__SAVED_SELECTION__";   // "State|Dialect", remembered in a cookie so a refresh returns here
 const SELECTED_DIALECT_ID = "__DIALECT_ID__";   // dialect chosen on the Select Dialect screen
 const demo = DEMO_MODE ? (window.TekvaaniDemo || null) : null;   // browser-only demo (demo.js), null when removed
-const VAD = { minThreshold: 0.015, maxThreshold: 0.06, startMs: 120, silenceMs: 1300, minSpeechMs: 350, settleMs: 700 };
+const VAD = { minThreshold: 0.015, maxThreshold: 0.06, startMs: 120, silenceMs: 800, minSpeechMs: 350, settleMs: 700 };
 const S = { IDLE: "IDLE", LISTENING: "LISTENING", THINKING: "THINKING", SPEAKING: "SPEAKING", ENDED: "ENDED" };
 
 const $ = id => document.getElementById(id);
@@ -21,7 +23,49 @@ let micStream = null, audioCtx = null, analyser = null, micLevel = 0, vadTimer =
 let mediaRecorder = null, recordedChunks = [];
 let currentAudio = null, speechPulse = 0;
 
+/* open the connection to the voice service early (DNS + TLS), so the first reply is not delayed by it */
+try {
+    const pc = document.createElement("link");
+    pc.rel = "preconnect"; pc.href = "https://tekvaani.vercel.app"; pc.crossOrigin = "anonymous";
+    document.head.appendChild(pc);
+} catch (_) {}
+
+/* remember the chosen language on this browser (cookie); read back by app.py after a refresh / reopen */
+function setSelectionCookie(value, days) {
+    const c = "tekvaani_selection=" + value + "; path=/; max-age=" + Math.round(days * 86400) + "; SameSite=Lax";
+    try { window.parent.document.cookie = c; }
+    catch (_) { try { document.cookie = c; } catch (__) {} }
+}
+setSelectionCookie(SAVED_SELECTION, 365);
+
+/* Wake the voice service early. On Vercel the first request after idle time can be slow (cold start).
+   A cheap GET to the chat address (answered with "method not allowed", no voice processing) starts the
+   service while the user is still speaking, so the real request is not delayed by it. */
+const VOICE_API_URL = "https://tekvaani.vercel.app/api/voice/chat";
+function warmUpBackend() {
+    try { fetch(VOICE_API_URL, { method: "GET", mode: "no-cors", cache: "no-store" }).catch(() => {}); } catch (_) {}
+}
+warmUpBackend();
+
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/* base64 audio from the backend -> short blob: URL (faster to load than a huge data: URI) */
+function audioUrlFromBase64(value) {
+    try {
+        let mime = "audio/wav", b64 = value;
+        if (value.startsWith("data:")) {
+            const comma = value.indexOf(",");
+            const m = /^data:([^;,]+)/.exec(value.slice(0, comma));
+            if (m) mime = m[1];
+            b64 = value.slice(comma + 1);
+        }
+        const bin = atob(b64), bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        return URL.createObjectURL(new Blob([bytes], { type: mime }));
+    } catch (_) {
+        return value.startsWith("data:") ? value : `data:audio/wav;base64,${value}`;
+    }
+}
 const isActive = () => state === S.LISTENING || state === S.THINKING || state === S.SPEAKING;
 const alive = id => id === session && state !== S.IDLE && state !== S.ENDED;
 
@@ -50,7 +94,9 @@ function removeLogoBackground(src) {
     });
 }
 const logoImgs = document.querySelectorAll(".logo-img");
-if (LOGO_SRC) {
+if (LOGO_SRC && LOGO_CLEAN) {
+    logoImgs.forEach(img => { img.src = LOGO_SRC; img.classList.add("ready"); });
+} else if (LOGO_SRC) {
     removeLogoBackground(LOGO_SRC).then(clean => logoImgs.forEach(img => { img.src = clean; img.classList.add("ready"); }));
 } else {
     logoImgs.forEach(img => { const w = document.createElement("span"); w.className = "wordmark"; w.textContent = "Tekvaani"; img.replaceWith(w); });
@@ -121,6 +167,7 @@ function resetTranscript() { chatEl.innerHTML = ""; msgCount = 0; render(); }
 async function startConversation() {
     if ((state !== S.IDLE && state !== S.ENDED) || starting) return;
     starting = true;
+    warmUpBackend();
     if (demo) demo.prime();
     const id = ++session;
     resetTranscript();
@@ -141,35 +188,59 @@ async function startConversation() {
 
 /* 2. Send microphone audio to the real service.
       TODO (real service): call with each audio chunk (MediaRecorder / AudioWorklet). */
+const HEDGE_AFTER_MS = 12000;   // reply normally takes 5-10 s; if it takes longer, ask a second time
+
 async function sendAudioToBackend(audioChunk) {
-  try {
+  const buildForm = () => {
     const formData = new FormData();
+    formData.append("file", audioChunk, "voice.webm");
+    formData.append("state", SELECTED_STATE);
+    formData.append("language", SELECTED_LANGUAGE);
+    formData.append("dialect", SELECTED_DIALECT_ID);
+    return formData;
+  };
 
-const state =
-  ["bhojpuri", "awadhi", "braj bhasha", "bundeli", "kannauji"].includes(SELECTED_DIALECT)
-    ? "Uttar Pradesh"
-    : "Odisha";
-
-const language = state === "Uttar Pradesh" ? "Hindi" : "Odia";
-
-formData.append("file", audioChunk, "voice.webm");
-formData.append("state", SELECTED_STATE);
-formData.append("language", SELECTED_LANGUAGE);
-formData.append("dialect", SELECTED_DIALECT_ID);
-
-    const response = await fetch("https://tekvaani.vercel.app/api/voice/chat", {
-      method: "POST",
-      body: formData
-    });
-
+  const attempt = async signal => {
+    const response = await fetch(VOICE_API_URL, { method: "POST", body: buildForm(), signal });
     if (!response.ok) {
       throw new Error(`Backend error: ${response.status}`);
     }
+    return await response.json();
+  };
 
-    const data = await response.json();
+  /* Some replies randomly take 20-45 s on the service. If the first request is still waiting after
+     HEDGE_AFTER_MS, send the same voice once more and use whichever answer arrives first. */
+  try {
+    const data = await new Promise((resolve, reject) => {
+      let done = false, started = 0, failed = 0, hedgeTimer = null;
+      const controllers = [];
+
+      const finish = (fn, value) => {
+        if (done) return;
+        done = true;
+        clearTimeout(hedgeTimer);
+        controllers.forEach(c => { try { c.abort(); } catch (_) {} });
+        fn(value);
+      };
+
+      const run = () => {
+        started++;
+        const controller = new AbortController();
+        controllers.push(controller);
+        attempt(controller.signal)
+          .then(result => finish(resolve, result))
+          .catch(err => {
+            if (done) return;
+            failed++;
+            if (failed >= started) finish(reject, err);   // every request that was started has failed
+          });
+      };
+
+      hedgeTimer = setTimeout(() => { if (!done) run(); }, HEDGE_AFTER_MS);
+      run();
+    });
 
     console.log("Tekvaani backend response:", data);
-
     return data;
   } catch (error) {
     console.error("Voice API error:", error);
@@ -198,11 +269,14 @@ async function playAIResponse(response, row, id = session) {
     row.classList.add("speaking");
     if (response.audioUrl) {
         await new Promise(resolve => {
-            currentAudio = new Audio(response.audioUrl);
+            currentAudio = new Audio();
+            currentAudio.preload = "auto";
             currentAudio.onended = resolve; currentAudio.onerror = resolve;
+            currentAudio.src = response.audioUrl;
             currentAudio.play().catch(resolve);
         });
         currentAudio = null;
+        if (response.audioUrl.startsWith("blob:")) URL.revokeObjectURL(response.audioUrl);
     } else if (demo) {
         await demo.playVoice(response, id);
     }
@@ -238,7 +312,7 @@ function resumeListening(id, mode) {
         mediaRecorder.start();
     }
 
-    resetVAD(performance.now() + (mode === "first" ? 400 : VAD.settleMs));
+    resetVAD(performance.now() + (mode === "first" ? 250 : VAD.settleMs));
 
     setState(S.LISTENING);
 
@@ -252,6 +326,7 @@ async function onUserTurnFinished(id) {
     userSpeaking = false;
     setState(S.THINKING);
 
+    let slowTimer = null;
     try {
         if (!mediaRecorder || mediaRecorder.state !== "recording") {
             throw new Error("Audio recorder is not active.");
@@ -285,8 +360,13 @@ async function onUserTurnFinished(id) {
             mediaRecorder.stop();
         });
 
-        // Send audio to backend
+        // Send audio to backend (tell the user if it is slower than usual)
+        slowTimer = setTimeout(() => {
+            if (alive(id) && state === S.THINKING) setNotice("This is taking a little longer than usual. Please wait...");
+        }, 8000);
         const data = await sendAudioToBackend(audioBlob);
+        clearTimeout(slowTimer);
+        if (!noticeEl.classList.contains("error")) setNotice("");
 
         if (!alive(id)) return;
 
@@ -340,11 +420,7 @@ async function onUserTurnFinished(id) {
 
         // Play backend audio
         if (data.audio_base64) {
-            let audioSrc = data.audio_base64;
-
-            if (!audioSrc.startsWith("data:")) {
-                audioSrc = `data:audio/wav;base64,${audioSrc}`;
-            }
+            const audioSrc = audioUrlFromBase64(data.audio_base64);
 
             await playAIResponse(
                 {
@@ -366,6 +442,7 @@ async function onUserTurnFinished(id) {
         }
 
     } catch (error) {
+        clearTimeout(slowTimer);
         console.error("Voice-to-voice error:", error);
 
         if (!alive(id)) return;
@@ -472,6 +549,7 @@ function closePanels() {
 $("helpBtn").addEventListener("click", () => openPanel(sheet, "sheetClose"));
 /* Language: end any conversation, then ask the app to go back to Select State -> Select Dialect. */
 $("langBtn").addEventListener("click", () => {
+    setSelectionCookie("", 0);   // user wants to change language: forget the old choice
     if (isActive()) endConversation();
     try {
         const b = window.parent.document.querySelector(".st-key-language_reset button");

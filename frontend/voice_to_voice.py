@@ -19,12 +19,15 @@ used instead. Settings/About in the menu press the existing app menu buttons, so
 app.py is not changed. Set False to keep the old header (menu and help then hidden).
 """
 
-import base64
 import json
+from functools import lru_cache
 from pathlib import Path
+from urllib.parse import quote
 
 import streamlit as st
 import streamlit.components.v1 as components
+
+from frontend.logo import logo_data_uri
 
 DEMO_MODE = False          # browser-only demo. Set False when the real service is wired in.
 SHOW_OWN_TOP_BAR = True   # in-page top bar + menu + How to Use (hides the old header on this page)
@@ -48,16 +51,24 @@ def _read(name: str) -> str:
     return (_DIR / name).read_text(encoding="utf-8")
 
 
-def _logo_data_uri() -> str:
-    """frontend/tekvaani.png as a data URI ('' if the file is missing)."""
+def _files_stamp() -> tuple:
+    """Modification times of the page files. Used as part of the cache key so that
+    editing voice.js / voice.css / voice.html is picked up without restarting."""
     try:
-        data = (Path(__file__).parent / "tekvaani.png").read_bytes()
-        return "data:image/png;base64," + base64.b64encode(data).decode()
+        return tuple((_DIR / n).stat().st_mtime_ns for n in ("voice.html", "voice.css", "voice.js", "demo.js"))
     except OSError:
-        return ""
+        return ()
 
 
 def _build_html(state: str = "", dialect: str = "") -> str:
+    return _build_html_cached(state, dialect, _files_stamp())
+
+
+@lru_cache(maxsize=32)
+def _build_html_cached(state: str, dialect: str, _stamp: tuple) -> str:
+    """Assemble the page once per (state, dialect). The files are read and the logo
+    is processed once, not on every Streamlit rerun. Nothing user-specific is cached:
+    the result only depends on the selected state and dialect."""
     state_id = "odisha" if state == "Odisha" else "uttar_pradesh"
     language_id = "odia" if state == "Odisha" else "hindi"
 
@@ -75,14 +86,19 @@ def _build_html(state: str = "", dialect: str = "") -> str:
 
     dialect_id = dialect_ids.get(dialect, "")
     demo_js = _read("demo.js") if DEMO_MODE else ""
+    # Logo background is removed here (once, cached) so the browser does not have to
+    # redo the pixel work every time the conversation page opens.
+    logo_uri, logo_clean = logo_data_uri(700)
     voice_js = (
         _read("voice.js")
         .replace("__DEMO__", "true" if DEMO_MODE else "false")
-        .replace("__LOGO__", _logo_data_uri())
+        .replace("__LOGO_CLEAN__", "true" if logo_clean else "false")
+        .replace("__LOGO__", logo_uri)
+        .replace("__SAVED_SELECTION__", quote(f"{state}|{dialect}", safe=""))
         .replace("__DIALECT__", json.dumps(dialect)[1:-1])
-.replace("__STATE_ID__", state_id)
-.replace("__LANGUAGE_ID__", language_id)
-.replace("__DIALECT_ID__", dialect_id)
+        .replace("__STATE_ID__", state_id)
+        .replace("__LANGUAGE_ID__", language_id)
+        .replace("__DIALECT_ID__", dialect_id)
     )
     return (
         _read("voice.html")
@@ -94,7 +110,6 @@ def _build_html(state: str = "", dialect: str = "") -> str:
 
 
 def voice_to_voice(state: str = "", dialect: str = ""):
-    
     if SHOW_OWN_TOP_BAR:
         st.markdown(_PAGE_CSS, unsafe_allow_html=True)
     components.html(_build_html(state, dialect), height=760, scrolling=False)

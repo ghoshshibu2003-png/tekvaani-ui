@@ -1,14 +1,10 @@
-
-import base64
-import io
-from functools import lru_cache
-from pathlib import Path
+from urllib.parse import unquote
 
 import streamlit as st
 
+from frontend.logo import logo_data_uri
 from frontend.styles import load_styles
 from frontend.voice_to_voice import voice_to_voice
-from frontend.storage import sync_selection
 
 
 # =====================================================
@@ -45,40 +41,32 @@ DIALECTS = {
     ],
 }
 
-for key in ("selected_state", "selected_dialect", "storage_loaded"):
-    if key not in st.session_state:
-        st.session_state[key] = False if key == "storage_loaded" else None
+# Remembered choice: the conversation page saves the selection in a browser cookie
+# ("tekvaani_selection"). Streamlit sends cookies with the first request, so reading
+# it here is instant (no custom component, no loading spinner, no extra rerun).
+
+def _saved_selection():
+    try:
+        raw = st.context.cookies.get("tekvaani_selection")
+        if not isinstance(raw, str) or not raw:
+            return None, None
+        state, _, dialect = unquote(raw).partition("|")
+    except Exception:
+        return None, None
+    # Never trust a cookie blindly: only accept values that exist in DIALECTS.
+    if state in DIALECTS and dialect in DIALECTS[state]:
+        return state, dialect
+    return None, None
+
+
+if "selected_state" not in st.session_state:
+    _state, _dialect = _saved_selection()
+    st.session_state.selected_state = _state
+    st.session_state.selected_dialect = _dialect
 
 
 # =====================================================
-# RESTORE + SAVE BROWSER SELECTION
-# =====================================================
-
-saved_selection = sync_selection(
-    st.session_state.selected_state,
-    st.session_state.selected_dialect,
-)
-
-if saved_selection is None:
-    # Browser component has not responded yet.
-    st.info("Loading your saved language selection...")
-    st.stop()
-
-if not st.session_state.storage_loaded:
-    st.session_state.storage_loaded = True
-
-    saved_state = saved_selection.get("state")
-    saved_dialect = saved_selection.get("dialect")
-
-    if saved_state in DIALECTS:
-        st.session_state.selected_state = saved_state
-
-        if saved_dialect in DIALECTS[saved_state]:
-            st.session_state.selected_dialect = saved_dialect
-
-
-# =====================================================
-# SELECTION SCREEN STYLING
+# SELECTION SCREEN STYLING + ARTWORK
 # =====================================================
 
 _SELECT_CSS = """
@@ -226,52 +214,37 @@ transform="translate(8 0)"/>
 </div>
 """
 
-
 # =====================================================
 # LOGO
 # =====================================================
+# The logo is processed once per server process (frontend/logo.py), not on every click.
+# It is shown at 52px high, so 300px wide is already sharp on high-density screens.
 
-@lru_cache(maxsize=1)
 def _logo_html() -> str:
-    try:
-        raw = Path("frontend/tekvaani.png").read_bytes()
-    except OSError:
+    uri, _ = logo_data_uri(300)
+    if not uri:
         return ""
+    return '<div class="sel-logo"><img alt="Tekvaani" src="' + uri + '"></div>'
 
-    try:
-        from PIL import Image
 
-        im = Image.open(io.BytesIO(raw)).convert("RGBA")
-        k = min(1.0, 700 / im.width)
-        im = im.resize((round(im.width * k), round(im.height * k)))
+# =====================================================
+# SELECTION CALLBACKS
+# =====================================================
+# Callbacks run BEFORE Streamlit reruns the script, so one click = one rerun.
+# (Calling st.rerun() after a button made every click run the whole script twice.)
 
-        px = im.load()
+def _pick_state(value):
+    st.session_state.selected_state = value
+    st.session_state.selected_dialect = None
 
-        for y in range(im.height):
-            for x in range(im.width):
-                r, g, b, a = px[x, y]
-                mn, mx = min(r, g, b), max(r, g, b)
 
-                if mx - mn < 16 and mn > 205:
-                    px[x, y] = (
-                        r,
-                        g,
-                        b,
-                        0 if mn >= 238 else round(a * (238 - mn) / 33),
-                    )
+def _pick_dialect(value):
+    st.session_state.selected_dialect = value
 
-        buf = io.BytesIO()
-        im.save(buf, "PNG")
-        raw = buf.getvalue()
 
-    except Exception:
-        pass
-
-    return (
-        '<div class="sel-logo"><img alt="Tekvaani" src="data:image/png;base64,'
-        + base64.b64encode(raw).decode()
-        + '"></div>'
-    )
+def _back_to_state():
+    st.session_state.selected_state = None
+    st.session_state.selected_dialect = None
 
 
 # =====================================================
@@ -299,43 +272,24 @@ def _selection_screen(
         )
 
         for option in options:
-            if st.button(
+            st.button(
                 option,
                 key=f"{key_prefix}_{option}",
                 use_container_width=True,
-            ):
-                on_pick(option)
-                st.rerun()
+                on_click=on_pick,
+                args=(option,),
+            )
 
         if on_back:
             with st.container(key="sel_back"):
-                if st.button(
+                st.button(
                     "← Back",
                     key=f"{key_prefix}_back",
                     use_container_width=True,
-                ):
-                    on_back()
-                    st.rerun()
+                    on_click=on_back,
+                )
 
     st.stop()
-
-
-# =====================================================
-# SELECTION CALLBACKS
-# =====================================================
-
-def _pick_state(value):
-    st.session_state.selected_state = value
-    st.session_state.selected_dialect = None
-
-
-def _pick_dialect(value):
-    st.session_state.selected_dialect = value
-
-
-def _back_to_state():
-    st.session_state.selected_state = None
-    st.session_state.selected_dialect = None
 
 
 # =====================================================
@@ -370,6 +324,8 @@ if st.session_state.selected_dialect is None:
 # =====================================================
 # CONVERSATION PAGE
 # =====================================================
+# The in-page "Language" button (inside the voice page) clicks this hidden
+# button; the callback resets the choice and Streamlit reruns once.
 
 st.markdown(
     '<style>.st-key-language_reset{display:none !important;}</style>',
@@ -377,10 +333,7 @@ st.markdown(
 )
 
 with st.container(key="language_reset"):
-    if st.button("Language", key="language_reset_btn"):
-        st.session_state.selected_state = None
-        st.session_state.selected_dialect = None
-        st.rerun()
+    st.button("Language", key="language_reset_btn", on_click=_back_to_state)
 
 
 voice_to_voice(
